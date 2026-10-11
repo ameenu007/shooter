@@ -1,0 +1,549 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Galaxy Defender - Space Shooter</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #050816;
+  color: white;
+  font-family: Arial, sans-serif;
+  text-align: center;
+  user-select: none;
+}
+h1 {
+  margin: 15px 0 5px;
+  color: #62e7ff;
+  text-shadow: 0 0 15px #00aaff;
+}
+#hud {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 12px;
+  font-size: 17px;
+  font-weight: bold;
+}
+#game {
+  display: block;
+  width: min(600px, 100%);
+  height: auto;
+  margin: auto;
+  background: #070b25;
+  border: 2px solid #2464a8;
+  box-shadow: 0 0 25px #0066ff40;
+  touch-action: none;
+}
+#message {
+  min-height: 28px;
+  margin: 10px;
+  color: #ffd166;
+}
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px;
+}
+button {
+  padding: 13px 22px;
+  background: #153b70;
+  color: white;
+  font-size: 17px;
+  font-weight: bold;
+  border: 1px solid #56c8ff;
+  border-radius: 12px;
+  cursor: pointer;
+  touch-action: none;
+}
+button:active { background: #1976d2; }
+#restart { background: #087f8c; margin: 5px; }
+.note { color: #aab8d4; font-size: 13px; padding: 8px; }
+</style>
+</head>
+<body>
+
+<h1>🚀 GALAXY DEFENDER</h1>
+
+<div id="hud">
+  <span>⭐ Score: <b id="score">0</b></span>
+  <span>❤️ Lives: <b id="lives">3</b></span>
+  <span>👾 Wave: <b id="wave">1</b></span>
+</div>
+
+<canvas id="game" width="600" height="700"></canvas>
+
+<div id="message">Defend the galaxy!</div>
+
+<div class="controls">
+  <button id="left">⬅ LEFT</button>
+  <button id="fire">🔥 FIRE</button>
+  <button id="right">RIGHT ➡</button>
+</div>
+<button id="restart">↻ RESTART GAME</button>
+
+<div class="note">
+  Keyboard: ← → or A/D to move · Space to shoot<br>
+  Mobile: Hold the buttons to move and fire
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width;
+const H = canvas.height;
+
+const scoreEl = document.getElementById("score");
+const livesEl = document.getElementById("lives");
+const waveEl = document.getElementById("wave");
+const messageEl = document.getElementById("message");
+
+const keys = {};
+let player, bullets, enemyBullets, enemies, particles, stars;
+let score, lives, wave, frame, gameOver, invincible, lastShot;
+let enemyDirection, spawnTimer;
+
+function resetGame() {
+  player = { x: W/2, y: H-85, w: 42, h: 42, speed: 5 };
+  bullets = [];
+  enemyBullets = [];
+  enemies = [];
+  particles = [];
+  stars = Array.from({length:100}, () => ({
+    x:Math.random()*W,
+    y:Math.random()*H,
+    size:Math.random()*2+0.5,
+    speed:Math.random()*2+0.4
+  }));
+
+  score = 0;
+  lives = 3;
+  wave = 1;
+  frame = 0;
+  gameOver = false;
+  invincible = 0;
+  lastShot = 0;
+  enemyDirection = 1;
+  spawnTimer = 0;
+
+  updateHUD();
+  messageEl.textContent = "Destroy the aliens and dodge their fire!";
+  createWave();
+}
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  livesEl.textContent = lives;
+  waveEl.textContent = wave;
+}
+
+function createWave() {
+  enemies = [];
+  const rows = Math.min(2 + wave, 5);
+  const cols = 7;
+  const ew = 34, eh = 30;
+  const gapX = 43, gapY = 42;
+  const startX = (W - (cols-1)*gapX-ew)/2;
+
+  for (let r=0;r<rows;r++) {
+    for (let c=0;c<cols;c++) {
+      enemies.push({
+        x:startX+c*gapX,
+        y:55+r*gapY,
+        w:ew,h:eh,
+        hp: wave >= 4 && r===0 ? 2 : 1,
+        type:r%3,
+        phase:Math.random()*6,
+        shootDelay:Math.random()*150
+      });
+    }
+  }
+  enemyDirection = 1;
+  spawnTimer = 0;
+  messageEl.textContent = "Wave " + wave + " incoming!";
+}
+
+function shoot() {
+  if (gameOver || frame-lastShot < 12) return;
+  bullets.push({
+    x:player.x,
+    y:player.y-22,
+    vx:0,vy:-9,
+    r:4
+  });
+  lastShot = frame;
+}
+
+function explode(x,y,color,count=12) {
+  for(let i=0;i<count;i++) {
+    const a=Math.random()*Math.PI*2;
+    const s=Math.random()*3+1;
+    particles.push({
+      x,y,
+      vx:Math.cos(a)*s,
+      vy:Math.sin(a)*s,
+      life:25+Math.random()*20,
+      color,
+      size:Math.random()*4+1
+    });
+  }
+}
+
+function hit(a,b) {
+  return a.x-a.w/2 < b.x+b.w/2 &&
+         a.x+a.w/2 > b.x-b.w/2 &&
+         a.y-a.h/2 < b.y+b.h/2 &&
+         a.y+a.h/2 > b.y-b.h/2;
+}
+
+function loseLife() {
+  if(invincible>0 || gameOver) return;
+  lives--;
+  invincible=100;
+  explode(player.x,player.y,"#4de8ff",25);
+  updateHUD();
+
+  if(lives<=0) {
+    gameOver=true;
+    messageEl.textContent="GAME OVER — Final score: "+score;
+  } else {
+    messageEl.textContent="Ship hit! Keep fighting!";
+  }
+}
+
+function update() {
+  frame++;
+
+  // Starfield animation
+  for(const s of stars) {
+    s.y+=s.speed;
+    if(s.y>H) {
+      s.y=0;
+      s.x=Math.random()*W;
+    }
+  }
+
+  for(let i=particles.length-1;i>=0;i--) {
+    const p=particles[i];
+    p.x+=p.vx;
+    p.y+=p.vy;
+    p.vx*=0.98;
+    p.vy*=0.98;
+    p.life--;
+    if(p.life<=0) particles.splice(i,1);
+  }
+
+  if(gameOver) return;
+
+  // Player movement
+  if(keys.ArrowLeft || keys.a || keys.A) player.x-=player.speed;
+  if(keys.ArrowRight || keys.d || keys.D) player.x+=player.speed;
+  player.x=Math.max(25,Math.min(W-25,player.x));
+
+  if(keys[" "] || keys.f || keys.F) shoot();
+  if(invincible>0) invincible--;
+
+  // Move player bullets
+  for(let i=bullets.length-1;i>=0;i--) {
+    const b=bullets[i];
+    b.y+=b.vy;
+    if(b.y<0) bullets.splice(i,1);
+  }
+
+  // Enemy fleet movement
+  if(enemies.length) {
+    let minX=Infinity,maxX=-Infinity;
+    for(const e of enemies) {
+      minX=Math.min(minX,e.x-e.w/2);
+      maxX=Math.max(maxX,e.x+e.w/2);
+    }
+
+    const speed=0.65+wave*0.16;
+    if(maxX>=W-8 || minX<=8) {
+      enemyDirection*=-1;
+      for(const e of enemies) e.y+=12;
+    }
+
+    for(const e of enemies) {
+      e.x+=enemyDirection*speed;
+      e.phase+=0.07;
+
+      // Enemies shoot downward
+      e.shootDelay--;
+      if(e.shootDelay<=0) {
+        enemyBullets.push({
+          x:e.x,
+          y:e.y+e.h/2,
+          w:6,h:15,
+          vy:3.2+wave*0.18
+        });
+        e.shootDelay=100+Math.random()*100-wave*3;
+      }
+
+      // Fleet reaching player ends the game
+      if(e.y+e.h/2 >= player.y-20) {
+        gameOver=true;
+        messageEl.textContent="The aliens invaded! Final score: "+score;
+      }
+    }
+  }
+
+  // Player bullets hit enemies
+  for(let i=bullets.length-1;i>=0;i--) {
+    const b=bullets[i];
+    let removed=false;
+
+    for(let j=enemies.length-1;j>=0;j--) {
+      const e=enemies[j];
+      if(Math.abs(b.x-e.x)<e.w/2+4 &&
+         Math.abs(b.y-e.y)<e.h/2+4) {
+        e.hp--;
+        bullets.splice(i,1);
+        removed=true;
+
+        if(e.hp<=0) {
+          explode(e.x,e.y,"#ff8c42",14);
+          enemies.splice(j,1);
+          score+=10;
+          updateHUD();
+        } else {
+          explode(b.x,b.y,"#ffef7a",4);
+        }
+        break;
+      }
+    }
+    if(removed) continue;
+  }
+
+  // Enemy bullets hit player
+  for(let i=enemyBullets.length-1;i>=0;i--) {
+    const b=enemyBullets[i];
+    b.y+=b.vy;
+
+    if(b.y>H+20) {
+      enemyBullets.splice(i,1);
+      continue;
+    }
+
+    if(invincible<=0 &&
+       Math.abs(b.x-player.x)<player.w/2+4 &&
+       Math.abs(b.y-player.y)<player.h/2+5) {
+      enemyBullets.splice(i,1);
+      loseLife();
+    }
+  }
+
+  // Enemies collide with the player
+  if(invincible<=0) {
+    for(const e of enemies) {
+      if(hit(
+        {x:player.x,y:player.y,w:player.w,h:player.h},
+        {x:e.x,y:e.y,w:e.w,h:e.h}
+      )) {
+        loseLife();
+        break;
+      }
+    }
+  }
+
+  // Next wave
+  if(enemies.length===0 && !gameOver) {
+    wave++;
+    updateHUD();
+    createWave();
+    player.x=W/2;
+    enemyBullets=[];
+    bullets=[];
+    invincible=90;
+  }
+}
+
+function drawShip(x,y) {
+  ctx.save();
+  ctx.translate(x,y);
+
+  // Engine flame
+  ctx.fillStyle=frame%8<4?"#ffb52e":"#ff4d6d";
+  ctx.beginPath();
+  ctx.moveTo(-8,17);
+  ctx.lineTo(0,34+Math.random()*7);
+  ctx.lineTo(8,17);
+  ctx.fill();
+
+  // Ship body
+  ctx.fillStyle="#4de8ff";
+  ctx.beginPath();
+  ctx.moveTo(0,-25);
+  ctx.lineTo(22,18);
+  ctx.lineTo(8,13);
+  ctx.lineTo(0,18);
+  ctx.lineTo(-8,13);
+  ctx.lineTo(-22,18);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle="#d9fbff";
+  ctx.beginPath();
+  ctx.moveTo(0,-16);
+  ctx.lineTo(7,7);
+  ctx.lineTo(-7,7);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle="#1e55bb";
+  ctx.fillRect(-22,12,12,6);
+  ctx.fillRect(10,12,12,6);
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  ctx.save();
+  ctx.translate(e.x,e.y);
+  ctx.fillStyle=e.hp>1?"#b794ff":
+    ["#ff5470","#72f59c","#ffb45e"][e.type];
+
+  ctx.beginPath();
+  ctx.moveTo(-17,-8);
+  ctx.lineTo(-8,-15);
+  ctx.lineTo(8,-15);
+  ctx.lineTo(17,-8);
+  ctx.lineTo(13,8);
+  ctx.lineTo(7,12);
+  ctx.lineTo(-7,12);
+  ctx.lineTo(-13,8);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle="#11162e";
+  ctx.fillRect(-10,-5,6,7);
+  ctx.fillRect(4,-5,6,7);
+  ctx.fillStyle="#fff";
+  ctx.fillRect(-8,-4,3,3);
+  ctx.fillRect(6,-4,3,3);
+
+  ctx.fillStyle="#e4a0ff";
+  ctx.fillRect(-23,0,8,5);
+  ctx.fillRect(15,0,8,5);
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+
+  // Space background
+  ctx.fillStyle="#070b25";
+  ctx.fillRect(0,0,W,H);
+
+  for(const s of stars) {
+    ctx.globalAlpha=0.4+s.size/4;
+    ctx.fillStyle="#d9f4ff";
+    ctx.fillRect(s.x,s.y,s.size,s.size);
+  }
+  ctx.globalAlpha=1;
+
+  // Nebula glow
+  const glow=ctx.createRadialGradient(W/2,300,20,W/2,300,350);
+  glow.addColorStop(0,"#16204b44");
+  glow.addColorStop(1,"#070b2500");
+  ctx.fillStyle=glow;
+  ctx.fillRect(0,0,W,H);
+
+  // Player laser bolts
+  for(const b of bullets) {
+    ctx.shadowBlur=12;
+    ctx.shadowColor="#38f9ff";
+    ctx.fillStyle="#baffff";
+    ctx.fillRect(b.x-3,b.y-12,6,19);
+    ctx.shadowBlur=0;
+  }
+
+  // Enemy laser bolts
+  for(const b of enemyBullets) {
+    ctx.shadowBlur=10;
+    ctx.shadowColor="#ff3864";
+    ctx.fillStyle="#ff6a83";
+    ctx.fillRect(b.x-3,b.y-8,6,16);
+    ctx.shadowBlur=0;
+  }
+
+  for(const e of enemies) drawEnemy(e);
+
+  // Flash the ship after damage
+  if(invincible<=0 || frame%8<4) {
+    drawShip(player.x,player.y);
+  }
+
+  for(const p of particles) {
+    ctx.globalAlpha=Math.max(0,p.life/45);
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x,p.y,p.size,p.size);
+  }
+  ctx.globalAlpha=1;
+
+  if(gameOver) {
+    ctx.fillStyle="#020515cc";
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign="center";
+    ctx.shadowBlur=15;
+    ctx.shadowColor="#00cfff";
+    ctx.fillStyle="#64ecff";
+    ctx.font="bold 38px Arial";
+    ctx.fillText("GAME OVER",W/2,H/2-35);
+    ctx.shadowBlur=0;
+    ctx.fillStyle="white";
+    ctx.font="bold 23px Arial";
+    ctx.fillText("Score: "+score,W/2,H/2+10);
+    ctx.font="18px Arial";
+    ctx.fillText("Press RESTART to play again",W/2,H/2+48);
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener("keydown",e=>{
+  if(["ArrowLeft","ArrowRight"," ","ArrowUp"].includes(e.key))
+    e.preventDefault();
+  keys[e.key]=true;
+});
+window.addEventListener("keyup",e=>keys[e.key]=false);
+window.addEventListener("blur",()=>{
+  for(const k in keys) keys[k]=false;
+});
+
+function bindButton(id,key) {
+  const el=document.getElementById(id);
+  el.addEventListener("pointerdown",e=>{
+    e.preventDefault();
+    keys[key]=true;
+    el.setPointerCapture(e.pointerId);
+  });
+  const release=e=>{
+    e.preventDefault();
+    keys[key]=false;
+  };
+  el.addEventListener("pointerup",release);
+  el.addEventListener("pointercancel",release);
+  el.addEventListener("lostpointercapture",release);
+}
+bindButton("left","ArrowLeft");
+bindButton("right","ArrowRight");
+bindButton("fire"," ");
+
+document.getElementById("restart").addEventListener("click",()=>{
+  resetGame();
+});
+
+resetGame();
+loop();
+</script>
+</body>
+</html>
